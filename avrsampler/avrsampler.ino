@@ -64,7 +64,7 @@ static bool sample_get(Double * pval)
         return false;
 
     int next = (bufr + 1) % BUF_SIZE;
-    *pval = buffer[bufr];
+    *pval = Double(buffer[bufr]);
     bufr = next;
     return true;
 }
@@ -90,16 +90,16 @@ static int do_freq()
     // determine zero crossings
     sample_reset();
     StateMachine sm(q1 - med, q3 - med);
-    int t = 0;
+    uint16_t t = 0;
     uint32_t start = millis();
-    Double first = 0.0;
-    Double last = 0.0;
-    int count = 0;
+    Double first;
+    Double last;
+    uint16_t count = 0;
     bool done = false;
     while (!done && ((millis() - start) < 3000)) {
-        Double value = 0;
+        Double value;
         if (sample_get(&value)) {
-            Double time = Double(t) / SAMPLE_FREQUENCY;
+            Double time = Double(t) / Double(uint16_t(SAMPLE_FREQUENCY));
             if (sm.process(time, value - med)) {
                 switch (count) {
                 case 0:

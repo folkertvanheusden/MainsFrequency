@@ -25,11 +25,12 @@ void Regression::add(Double x, Double y)
 
 void Regression::calculate()
 {
-    Double nom = (sum_xy * n) - (sum_x * sum_y);
-    Double denom = (sum_xx * n) - (sum_x * sum_x);
+    Double nD(n);
+    Double nom = (sum_xy * nD) - (sum_x * sum_y);
+    Double denom = (sum_xx * nD) - (sum_x * sum_x);
     this->b = nom / denom;
-    this->a = (sum_y - b * sum_x) / n;
-    this->c = (sum_x - sum_y / b) / n;
+    this->a = (sum_y - b * sum_x) / nD;
+    this->c = (sum_x - sum_y / b) / nD;
 }
 
 Double Regression::getA() const

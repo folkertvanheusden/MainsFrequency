@@ -7,7 +7,7 @@ class Regression {
     Double sum_y;
     Double sum_xx;
     Double sum_xy;
-    int n;
+    uint16_t n;
 
     Double a;             // slope
     Double b;             // intercept on y-axis

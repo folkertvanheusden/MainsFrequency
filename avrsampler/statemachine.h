@@ -11,10 +11,10 @@ typedef enum {
 class StateMachine {
 
   private:
-    Double low { 0 };
-    Double high { 0 };
+    Double low;
+    Double high;
     EState state { STATE_IDLE };
-    Double result { 0 };
+    Double result;
     Regression regression;
 
   public:

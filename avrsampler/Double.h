@@ -2,8 +2,6 @@
 
 #include <fp64lib.h>
 
-#include <fp64lib.h>
-
 class Double {
 	public:
 		Double()				{ x = 0ULL; }
