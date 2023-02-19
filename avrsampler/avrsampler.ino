@@ -1,6 +1,6 @@
 #include "statemachine.h"
 
-#define SAMPLE_FREQUENCY    5000
+#define SAMPLE_FREQUENCY    1000
 
 // sample buffer
 #define BUF_SIZE    1500
@@ -58,13 +58,13 @@ static void sample_reset(void)
     overflow = false;
 }
 
-static bool sample_get(Double * pval)
+static bool sample_get(float64_t * pval)
 {
     if (bufr == bufw)
         return false;
 
     int next = (bufr + 1) % BUF_SIZE;
-    *pval = Double(buffer[bufr]);
+    *pval = fp64_uint16_to_float64(buffer[bufr]);
     bufr = next;
     return true;
 }
@@ -89,18 +89,18 @@ static int do_freq()
 
     // determine zero crossings
     sample_reset();
-    StateMachine sm(q1 - med, q3 - med);
+    StateMachine sm(fp64_int32_to_float64(q1 - med), fp64_int32_to_float64(q3 - med));
     uint16_t t = 0;
     uint32_t start = millis();
-    Double first;
-    Double last;
+    float64_t first = 0;
+    float64_t last = 0;
     uint16_t count = 0;
     bool done = false;
     while (!done && ((millis() - start) < 3000)) {
-        Double value;
+        float64_t value = 0;
         if (sample_get(&value)) {
-            Double time = Double(t) / Double(uint16_t(SAMPLE_FREQUENCY));
-            if (sm.process(time, value - med)) {
+            float64_t time = fp64_div(fp64_uint16_to_float64(t), fp64_uint16_to_float64(SAMPLE_FREQUENCY));
+            if (sm.process(time, fp64_sub(value, fp64_uint16_to_float64(med)))) {
                 switch (count) {
                 case 0:
                     first = sm.get_result();
@@ -117,7 +117,7 @@ static int do_freq()
             t++;
         }
     }
-    Double freq = Double(50.0) / (last - first);
+    float64_t freq = fp64_div(fp64_uint16_to_float64(50), fp64_sub(last, first));
     Serial.print(F("overflow="));
     Serial.print(overflow);
     Serial.print(F(",done="));
@@ -125,11 +125,11 @@ static int do_freq()
     Serial.print(F(",n="));
     Serial.print(count);
     Serial.print(F(",first="));
-    Serial.print(first.toString());
+    Serial.print(fp64_to_string(first, 17, 15));
     Serial.print(F(",last="));
-    Serial.print(last.toString());
+    Serial.print(fp64_to_string(last, 17, 15));
     Serial.print(F(",freq="));
-    Serial.println(freq.toString());
+    Serial.println(fp64_to_string(freq, 17, 15));
 
     return 1;
 }
