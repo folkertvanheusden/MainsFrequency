@@ -1,6 +1,6 @@
 #include "statemachine.h"
 
-#define SAMPLE_FREQUENCY    1000
+#define SAMPLE_FREQUENCY    5000
 
 // sample buffer
 #define BUF_SIZE    1500
@@ -35,7 +35,6 @@ static void adc_init(uint16_t hz)
     TCNT0  = 0; // initialize counter value to 0
     // set compare match register for 'hz' Hz increments
     OCR0A = 16000000ll / (64 * hz) - 1; // (must be <256)
-Serial.println(OCR0A);
     // turn on CTC mode
     TCCR0B |= (1 << WGM01);
     // Set CS02, CS01 and CS00 bits for 64 prescaler
@@ -59,7 +58,7 @@ static void sample_reset(void)
     overflow = false;
 }
 
-static bool sample_get(double * pval)
+static bool sample_get(Double * pval)
 {
     if (bufr == bufw)
         return false;
@@ -93,14 +92,14 @@ static int do_freq()
     StateMachine sm(q1 - med, q3 - med);
     int t = 0;
     uint32_t start = millis();
-    double first = 0.0;
-    double last = 0.0;
+    Double first = 0.0;
+    Double last = 0.0;
     int count = 0;
     bool done = false;
     while (!done && ((millis() - start) < 3000)) {
-        double value = 0;
+        Double value = 0;
         if (sample_get(&value)) {
-            double time = double(t) / SAMPLE_FREQUENCY;
+            Double time = Double(t) / SAMPLE_FREQUENCY;
             if (sm.process(time, value - med)) {
                 switch (count) {
                 case 0:
@@ -118,7 +117,7 @@ static int do_freq()
             t++;
         }
     }
-    double freq = 50.0 / (last - first);
+    Double freq = Double(50.0) / (last - first);
     Serial.print(F("overflow="));
     Serial.print(overflow);
     Serial.print(F(",done="));
@@ -126,11 +125,11 @@ static int do_freq()
     Serial.print(F(",n="));
     Serial.print(count);
     Serial.print(F(",first="));
-    Serial.print(first);
+    Serial.print(first.toString());
     Serial.print(F(",last="));
-    Serial.print(last);
+    Serial.print(last.toString());
     Serial.print(F(",freq="));
-    Serial.println(freq, 6);
+    Serial.println(freq.toString());
 
     return 1;
 }

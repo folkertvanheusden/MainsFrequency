@@ -1,22 +1,23 @@
+#include <fp64lib.h>
 #include "statemachine.h"
 
-StateMachine::StateMachine(const double low, const double high)
+StateMachine::StateMachine(const Double low, const Double high)
 {
     this->low   = low;
     this->high  = high;
     this->state = STATE_IDLE;
 }
 
-bool StateMachine::process(const double time, const double v)
+bool StateMachine::process(const Double time, const Double v)
 {
     switch (state) {
     case STATE_IDLE:
-        if (v < low) {
+	if (fp64_compare(v.raw(), low.raw()) == -1) {
             this->state = STATE_LOW;
         }
         break;
     case STATE_LOW:
-        if (v > low) {
+	if (fp64_compare(v.raw(), low.raw()) == +1) {
             // start linear regression
             this->regression.reset();
             this->regression.add(time, v);
@@ -25,7 +26,7 @@ bool StateMachine::process(const double time, const double v)
         }
         break;
     case STATE_SLOPE:
-        if (v > high) {
+	if (fp64_compare(v.raw(), high.raw()) == +1) {
             // end linear regression
             this->regression.calculate();
             this->result = this->regression.getC();
@@ -42,7 +43,7 @@ bool StateMachine::process(const double time, const double v)
     return false;
 }
 
-double StateMachine::get_result()
+Double StateMachine::get_result()
 {
     return result;
 }

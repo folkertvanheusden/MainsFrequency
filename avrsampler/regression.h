@@ -1,15 +1,17 @@
+#include "Double.h"
+
 class Regression {
 
   private:
-    double sum_x { 0 };
-    double sum_y { 0 };
-    double sum_xx { 0 };
-    double sum_xy { 0 };
-    int n { 0 };
+    Double sum_x;
+    Double sum_y;
+    Double sum_xx;
+    Double sum_xy;
+    int n;
 
-    double a { 0.0 };             // slope
-    double b { 0.0 };             // intercept on y-axis
-    double c { 0.0 };             // intercept on x-axis
+    Double a;             // slope
+    Double b;             // intercept on y-axis
+    Double c;             // intercept on x-axis
 
   public:
     /**
@@ -18,12 +20,12 @@ class Regression {
     explicit Regression();
 
     void reset();
-    void add(double x, double y);
+    void add(Double x, Double y);
 
     // calculates the regression, results are available through getA(), getB(), getC()
     void calculate();
 
-    double getA() const;
-    double getB() const;
-    double getC() const;
+    Double getA() const;
+    Double getB() const;
+    Double getC() const;
 };

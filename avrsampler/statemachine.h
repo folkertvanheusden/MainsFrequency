@@ -11,19 +11,19 @@ typedef enum {
 class StateMachine {
 
   private:
-    double low { 0 };
-    double high { 0 };
+    Double low { 0 };
+    Double high { 0 };
     EState state { STATE_IDLE };
-    double result { 0 };
+    Double result { 0 };
     Regression regression;
 
   public:
     /**
      * Constructor.
      */
-    explicit StateMachine(const double low, const double high);
+    explicit StateMachine(const Double low, const Double high);
 
-    bool process(const double time, const double v);
+    bool process(const Double time, const Double v);
 
-    double get_result();
+    Double get_result();
 };

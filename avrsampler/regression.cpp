@@ -7,14 +7,14 @@ Regression::Regression()
 
 void Regression::reset()
 {
-    this->sum_x = 0.0;
-    this->sum_y = 0.0;
-    this->sum_xx = 0.0;
-    this->sum_xy = 0.0;
+    this->sum_x.reset();
+    this->sum_y.reset();
+    this->sum_xx.reset();
+    this->sum_xy.reset();
     this->n = 0;
 }
 
-void Regression::add(double x, double y)
+void Regression::add(Double x, Double y)
 {
     this->sum_x += x;
     this->sum_y += y;
@@ -25,25 +25,24 @@ void Regression::add(double x, double y)
 
 void Regression::calculate()
 {
-    double nom = (sum_xy * n) - (sum_x * sum_y);
-    double denom = (sum_xx * n) - (sum_x * sum_x);
+    Double nom = (sum_xy * n) - (sum_x * sum_y);
+    Double denom = (sum_xx * n) - (sum_x * sum_x);
     this->b = nom / denom;
     this->a = (sum_y - b * sum_x) / n;
     this->c = (sum_x - sum_y / b) / n;
 }
 
-double Regression::getA() const
+Double Regression::getA() const
 {
     return a;
 }
 
-double Regression::getB() const
+Double Regression::getB() const
 {
     return b;
 }
 
-double Regression::getC() const
+Double Regression::getC() const
 {
     return c;
 }
-
