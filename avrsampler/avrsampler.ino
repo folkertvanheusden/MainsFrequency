@@ -1,6 +1,6 @@
 #include "statemachine.h"
 
-#define SAMPLE_FREQUENCY    5000
+#define SAMPLE_FREQUENCY    1000
 
 // sample buffer
 #define BUF_SIZE    1500
@@ -24,17 +24,18 @@ ISR(TIMER0_COMPA_vect)
     }
 }
 
-static void adc_init()
+static void adc_init(uint16_t hz)
 {
     // with help from http://www.8bit-era.cz/arduino-timer-interrupts-calculator.html
 
-    // TIMER 0 for interrupt frequency 5000 Hz:
+    // TIMER 0 for interrupt frequency 'hz' Hz:
     cli(); // stop interrupts
     TCCR0A = 0; // set entire TCCR0A register to 0
     TCCR0B = 0; // same for TCCR0B
     TCNT0  = 0; // initialize counter value to 0
-    // set compare match register for 5000 Hz increments
-    OCR0A = 49; // = 16000000 / (64 * 5000) - 1 (must be <256)
+    // set compare match register for 'hz' Hz increments
+    OCR0A = 16000000ll / (64 * hz) - 1; // (must be <256)
+Serial.println(OCR0A);
     // turn on CTC mode
     TCCR0B |= (1 << WGM01);
     // Set CS02, CS01 and CS00 bits for 64 prescaler
@@ -140,7 +141,7 @@ void setup(void) {
 
     pinMode(LED_BUILTIN, OUTPUT);
 
-    adc_init();
+    adc_init(SAMPLE_FREQUENCY);
 }
 
 void loop(void) {
