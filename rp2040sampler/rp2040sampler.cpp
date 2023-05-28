@@ -163,6 +163,7 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
             if (sm.process(time, value - med)) {
                 switch (count) {
                 case 0:
+                    gpio_put(LED2_PIN, 1);
                     first = sm.get_result();
                     rms_started = do_rms;
                     break;
@@ -170,6 +171,9 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
                     rms_started = false;
                     do_rms = false;
                     break;
+		case 25:
+                    gpio_put(LED2_PIN, 0);
+		    break;
                 case 50:
                     last = sm.get_result();
                     done = true;
@@ -319,8 +323,6 @@ void thread2()
 
 		gpio_put(LED1_PIN, 0);
 
-		gpio_put(LED2_PIN, 1);
-
 		printf("variance: %.6f ", variance);
 
 		char buffer_hz[16] { 0 };
@@ -332,7 +334,6 @@ void thread2()
 		snprintf(buffer_ac_volt_rms, sizeof buffer_ac_volt_rms, "%.6f", ac_volt_rms);
 		printf("%s\n", buffer_ac_volt_rms);
 		publish_mqtt(&static_client, "mains/ac-voltager-rms", buffer_ac_volt_rms);
-		gpio_put(LED2_PIN, 0);
 	}
 
 	cyw43_arch_deinit();
