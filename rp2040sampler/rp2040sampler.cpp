@@ -8,6 +8,7 @@
 #include "lwip/netdb.h"
 
 #include "hardware/adc.h"
+#include "hardware/watchdog.h"
 #include "pico/cyw43_arch.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
@@ -118,7 +119,7 @@ public:
 	}
 };
 
-static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bias, double *variance)
+static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bias, double *variance, double *diff)
 {
     // take stats
     sample_reset();
@@ -149,6 +150,7 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
     bool done = false;
     bool do_rms = true;
     bool rms_started = false;
+    double max_ = -65535, min_ = 65535;
     while (!done && ((millis() - start) < 3000)) {
         uint16_t temp = 0;
         if (sample_get(&temp)) {
@@ -157,6 +159,8 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
             if (rms_started) {
                  //readRms.update(signed_value);
 	         w.update(frag);
+	         if (frag > max_) max_ = frag;
+     	         if (frag < min_) min_ = frag;
             }
             double value = temp;
             double time = (double)t / SAMPLE_FREQUENCY;
@@ -204,6 +208,8 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
 
     //*volt_dc_bias = readRms.dcBias;
 	*volt_dc_bias = -1.0;
+
+	*diff = max_ - min_;
 }
 
 static void mqtt_pub_request_cb(void *arg, err_t result)
@@ -319,11 +325,20 @@ void thread2()
 		double dc_bias = 0.;
 		double hz = 0.;
 		double variance = 0.;
-		do_measure(&hz, &ac_volt_rms, &dc_bias, &variance);
+		double diff = 0;
+		do_measure(&hz, &ac_volt_rms, &dc_bias, &variance, &diff);
 
 		gpio_put(LED1_PIN, 0);
 
-		printf("variance: %.6f ", variance);
+		char buffer_diff[16] { 0 };
+		snprintf(buffer_diff, sizeof buffer_diff, "%.06f", diff);
+		printf("%s ", buffer_diff);
+		publish_mqtt(&static_client, "mains/diff", buffer_diff);
+
+		char buffer_variance[16] { 0 };
+		snprintf(buffer_variance, sizeof buffer_variance, "%.6f", variance);
+		printf("%s ", buffer_variance);
+		publish_mqtt(&static_client, "mains/variance", buffer_variance);
 
 		char buffer_hz[16] { 0 };
 		snprintf(buffer_hz, sizeof buffer_hz, "%.6f", hz);
@@ -344,6 +359,11 @@ int main(int argc, char *argv[])
 	stdio_init_all();
 
 	sleep_ms(2500);
+
+	if (watchdog_caused_reboot())
+		printf("Rebooted by watchdog!\n");
+
+	watchdog_enable(100, 1);
 
 	printf("Init ADC\n");
 
@@ -369,8 +389,11 @@ int main(int argc, char *argv[])
 
 	printf("Core 0 - sleep for timer\n");
 
-	for(;;)
-		sleep_ms(1000);
+	for(;;) {
+		watchdog_enable(100, 1);
+
+		sleep_ms(45);
+	}
 
 	return 0;
 }
