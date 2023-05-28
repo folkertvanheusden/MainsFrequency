@@ -16,7 +16,8 @@
 
 #include "statemachine.h"
 
-#define LED_PIN 16
+#define LED1_PIN 25
+#define LED2_PIN 17
 
 static inline uint32_t millis(void) { return to_ms_since_boot(get_absolute_time()); }
 
@@ -308,7 +309,7 @@ void thread2()
 	do_mqtt_connect(&static_client);
 
 	for(;;) {
-		gpio_put(LED_PIN, 1);
+		gpio_put(LED1_PIN, 1);
 
 		double ac_volt_rms = 0.;
 		double dc_bias = 0.;
@@ -316,21 +317,22 @@ void thread2()
 		double variance = 0.;
 		do_measure(&hz, &ac_volt_rms, &dc_bias, &variance);
 
-		gpio_put(LED_PIN, 0);
+		gpio_put(LED1_PIN, 0);
+
+		gpio_put(LED2_PIN, 1);
 
 		printf("variance: %.6f ", variance);
 
 		char buffer_hz[16] { 0 };
 		snprintf(buffer_hz, sizeof buffer_hz, "%.6f", hz);
 		printf("%s ", buffer_hz);
-
 		publish_mqtt(&static_client, "mains/frequency", buffer_hz);
 
 		char buffer_ac_volt_rms[16] { 0 };
 		snprintf(buffer_ac_volt_rms, sizeof buffer_ac_volt_rms, "%.6f", ac_volt_rms);
-		printf("%s ", buffer_hz);
-
+		printf("%s\n", buffer_ac_volt_rms);
 		publish_mqtt(&static_client, "mains/ac-voltager-rms", buffer_ac_volt_rms);
+		gpio_put(LED2_PIN, 0);
 	}
 
 	cyw43_arch_deinit();
@@ -350,8 +352,11 @@ int main(int argc, char *argv[])
 
 	printf("Init GPIO\n");
 
-	gpio_init(LED_PIN);
-	gpio_set_dir(LED_PIN, GPIO_OUT);
+	gpio_init(LED1_PIN);
+	gpio_set_dir(LED1_PIN, GPIO_OUT);
+
+	gpio_init(LED2_PIN);
+	gpio_set_dir(LED2_PIN, GPIO_OUT);
 
 	printf("Start timer\n");
 
