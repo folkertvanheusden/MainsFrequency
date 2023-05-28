@@ -1,16 +1,23 @@
+#include <optional>
+#include <tuple>
+
 #include "lwipopts.h"
 #include "lwip/apps/mqtt.h"
-//#include <lwip/apps/mqtt_priv.h>
+#include "lwip/apps/mqtt_priv.h"
 
-#include "pico/stdlib.h"
-#include "pico/multicore.h"
+#include "hardware/adc.h"
 #include "pico/cyw43_arch.h"
+#include "pico/multicore.h"
+#include "pico/stdlib.h"
 
 //#include "TrueRMS/src/TrueRMS.h"
 
 #include "statemachine.h"
 
-#define PIN_50HZ_INPUT      A0
+#define LED_PIN 16
+
+static inline uint32_t millis(void) { return to_ms_since_boot(get_absolute_time()); }
+
 #define SAMPLE_FREQUENCY    10000
 
 #define W_SSID ""
@@ -43,7 +50,7 @@ bool timer_isr(struct repeating_timer *t)
     uint32_t next = (bufw + 1) % BUF_SIZE;
     if (!overflow) {
         if (next != bufr) {
-            latest_reading = buffer[bufw] = analogRead(PIN_50HZ_INPUT);
+            latest_reading = buffer[bufw] = adc_read();
             tt++;
             bufw = next;
         } else {
@@ -52,13 +59,6 @@ bool timer_isr(struct repeating_timer *t)
     }
 
     return true;
-}
-
-static void adc_init()
-{
-    analogReadResolution(12);  // 12bit conversion
-
-    add_repeating_timer_us(-1000000 / SAMPLE_FREQUENCY, timer_isr, nullptr, &timer);
 }
 
 static int compare_uint16(const void *v1, const void *v2)
@@ -119,7 +119,7 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
 {
     // take stats
     sample_reset();
-    while (!overflow) yield();
+    while (!overflow) sleep_ms(1);
     qsort(buffer, BUF_SIZE, sizeof(uint16_t), compare_uint16);
     uint16_t q1 = buffer[2 * BUF_SIZE / 8];
     uint16_t med = buffer[4 * BUF_SIZE / 8];
@@ -199,58 +199,10 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
 	*volt_dc_bias = -1.0;
 }
 
-void setup(void)
-{
-    pinMode(LED_BUILTIN, OUTPUT);
-
-    adc_init();
-
-    // platformio currently (2023/05/24) does not implement
-    // the setup()/setup1() pair like the arduino ide does
-    multicore_launch_core1(thread2);
-}
-
-void loop()
-{
-	delay(16383);
-}
-
-void thread2()
-{
-	setup1();
-
-	for(;;)
-		loop1();
-}
-
-int main(int argc, char *argv[])
-{
-	if (cyw43_arch_init()) {
-		printf("failed to initialise\n");
-	        return 1;
-	}
-
-	cyw43_arch_enable_sta_mode();
-
-	if (cyw43_arch_wifi_connect_timeout_ms(W_SSID, W_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000)) {
-		printf("failed to connect\n");
-		return 1;
-	}
-
-	setup();
-
-	for(;;)
-		loop();
-
-	cyw43_arch_deinit();
-
-	return 0;
-}
-
 static void mqtt_pub_request_cb(void *arg, err_t result)
 {
     if (result != ERR_OK)
-        Serial.println(F("Publish failed"));
+        printf("Publish failed\n");
 }
 
 void publish_mqtt(mqtt_client_t *client, const char *topic, const char *what)
@@ -260,8 +212,10 @@ void publish_mqtt(mqtt_client_t *client, const char *topic, const char *what)
 
     err_t err = mqtt_publish(client, topic, what, strlen(what), qos, retain, mqtt_pub_request_cb, nullptr);
     if (err != ERR_OK)
-        Serial.println(F("mqtt_publish failed"));
+        printf("mqtt_publish failed\n");
 }
+
+static void do_mqtt_connect(mqtt_client_t *client);
 
 static void mqtt_connection_cb(mqtt_client_t *client, void *arg, mqtt_connection_status_t status)
 {
@@ -283,58 +237,69 @@ static void do_mqtt_connect(mqtt_client_t *client)
     err_t err = mqtt_client_connect(client, &MQTT_HOST, MQTT_PORT, mqtt_connection_cb, 0, &ci);
 
     if (err != ERR_OK)
-        Serial.println(F("Failed to connect to MQTT server"));
+        printf("Failed to connect to MQTT server\n");
 }
 
-void setup1()
+void thread2()
 {
-    Serial.begin(115200);
+	for(;;) {
+		gpio_put(LED_PIN, 1);
 
-    pinMode(16, OUTPUT);
+		double ac_volt_rms = 0.;
+		double dc_bias = 0.;
+		double hz = 0.;
+		double variance = 0.;
+		do_measure(&hz, &ac_volt_rms, &dc_bias, &variance);
 
-    WiFi.mode(WIFI_STA);
+		gpio_put(LED_PIN, 0);
 
-    WiFi.begin(W_SSID, W_PASS);
+		printf("variance: %.6f ", variance);
 
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
+		char buffer_hz[16] { 0 };
+		snprintf(buffer_hz, sizeof buffer_hz, "%.6f", hz);
+		printf("%s ", buffer_hz);
 
-    Serial.println(F(""));
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+		publish_mqtt(&static_client, "mains/frequency", buffer_hz);
 
-    Serial.println(F(""));
-    Serial.println(F("STM32SAMPLER"));
+		char buffer_ac_volt_rms[16] { 0 };
+		snprintf(buffer_ac_volt_rms, sizeof buffer_ac_volt_rms, "%.6f", ac_volt_rms);
+		printf("%s ", buffer_hz);
+
+		publish_mqtt(&static_client, "mains/ac-voltager-rms", buffer_ac_volt_rms);
+	}
 }
 
-void loop1()
+int main(int argc, char *argv[])
 {
-    digitalWrite(16, HIGH);
+	stdio_init_all();
 
-    double ac_volt_rms = 0.;
-    double dc_bias = 0.;
-    double hz = 0.;
-    double variance = 0.;
-    do_measure(&hz, &ac_volt_rms, &dc_bias, &variance);
+	adc_init();
+	adc_gpio_init(26);
+	adc_select_input(0);
 
-    digitalWrite(16, LOW);
+	gpio_init(LED_PIN);
+	gpio_set_dir(LED_PIN, GPIO_OUT);
 
-    Serial.print(variance, 6);
-    Serial.print(' ');
+	if (cyw43_arch_init()) {
+		printf("failed to initialise\n");
+	        return 1;
+	}
 
-    char buffer_hz[16] { 0 };
-    snprintf(buffer_hz, sizeof buffer_hz, "%.6f", hz);
-    Serial.print(buffer_hz);
+	cyw43_arch_enable_sta_mode();
 
-    publish_mqtt(&static_client, "mains/frequency", buffer_hz);
+	if (cyw43_arch_wifi_connect_timeout_ms(W_SSID, W_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000)) {
+		printf("failed to connect\n");
+		return 1;
+	}
 
-    Serial.print(' ');
+	add_repeating_timer_us(-1000000 / SAMPLE_FREQUENCY, timer_isr, nullptr, &timer);
 
-    char buffer_ac_volt_rms[16] { 0 };
-    snprintf(buffer_ac_volt_rms, sizeof buffer_ac_volt_rms, "%.6f", ac_volt_rms);
-    Serial.println(buffer_ac_volt_rms);
+	multicore_launch_core1(thread2);
 
-    publish_mqtt(&static_client, "mains/ac-voltager-rms", buffer_ac_volt_rms);
+	for(;;)
+		sleep_ms(1);
+
+	cyw43_arch_deinit();
+
+	return 0;
 }

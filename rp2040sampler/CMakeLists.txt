@@ -16,16 +16,17 @@ add_executable(mainsdata
 	statemachine.cpp
 	rp2040sampler.cpp)
 
-target_include_directories(mainsdata PUBLIC /opt/pico-sdk/lib/lwip/src/include ./ /opt/pico-sdk/src/rp2_common/pico_lwip/include /opt/pico-sdk/src/rp2_common/pico_rand/include/ /opt/pico-sdk/src/rp2_common/pico_cyw43_arch/include/ /opt/pico-sdk/lib/cyw43-driver/src/ /opt/pico-sdk/src/rp2_common/pico_cyw43_driver/include /opt/pico-sdk/src/rp2_common/pico_async_context/include)
-
 pico_enable_stdio_usb(${PROJECT_NAME} 1)
 pico_enable_stdio_uart(${PROJECT_NAME} 0)
+
+target_include_directories(mainsdata PUBLIC .)
 
 pico_add_extra_outputs(mainsdata)
 
 target_link_libraries(mainsdata
+	hardware_adc
 	pico_lwip_mqtt
+	pico_cyw43_arch_lwip_threadsafe_background
 	pico_stdlib
         pico_multicore
-	hardware_gpio
-	FreeRTOS)
+	hardware_gpio)
