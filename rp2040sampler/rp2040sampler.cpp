@@ -4,6 +4,8 @@
 #include "lwipopts.h"
 #include "lwip/apps/mqtt.h"
 #include "lwip/apps/mqtt_priv.h"
+#include "lwip/dns.h"
+#include "lwip/netdb.h"
 
 #include "hardware/adc.h"
 #include "pico/cyw43_arch.h"
@@ -20,10 +22,10 @@ static inline uint32_t millis(void) { return to_ms_since_boot(get_absolute_time(
 
 #define SAMPLE_FREQUENCY    10000
 
-#define W_SSID ""
-#define W_PASS ""
+#define W_SSID "Folkert"
+#define W_PASS "Hallo123"
 
-const ip_addr_t MQTT_HOST = IPADDR4_INIT_BYTES(192, 168, 64, 1);
+static ip_addr_t MQTT_HOST;
 
 static mqtt_client_t static_client;
 
@@ -212,7 +214,7 @@ void publish_mqtt(mqtt_client_t *client, const char *topic, const char *what)
 
     err_t err = mqtt_publish(client, topic, what, strlen(what), qos, retain, mqtt_pub_request_cb, nullptr);
     if (err != ERR_OK)
-        printf("mqtt_publish failed\n");
+        printf("mqtt_publish failed: %d\n", err);
 }
 
 static void do_mqtt_connect(mqtt_client_t *client);
@@ -228,27 +230,82 @@ static void mqtt_connection_cb(mqtt_client_t *client, void *arg, mqtt_connection
     }
 }
 
+bool hostname_found = false;
+
+static void dns_found(const char *name, const ip_addr_t *ipaddr, void *callback_arg)
+{
+	hostname_found = true;
+
+	ip_addr_t *tgt = (ip_addr_t *)callback_arg;
+
+	if (ipaddr) {
+		*tgt = *ipaddr;
+		printf("dns lookup finished\n");
+	}
+	else {
+		printf("dns lookup failed\n");
+	}
+}
+
 static void do_mqtt_connect(mqtt_client_t *client)
 {
-    mqtt_connect_client_info_t ci { 0 };
+	mqtt_connect_client_info_t ci { 0 };
 
-    ci.client_id = "50hz";
+	ci.client_id = "MainsData";
 
-    err_t err = mqtt_client_connect(client, &MQTT_HOST, MQTT_PORT, mqtt_connection_cb, 0, &ci);
+	err_t err = mqtt_client_connect(client, &MQTT_HOST, MQTT_PORT, mqtt_connection_cb, 0, &ci);
 
-    if (err != ERR_OK)
-        printf("Failed to connect to MQTT server\n");
+	if (err != ERR_OK)
+		printf("Failed to connect to MQTT server\n");
 }
 
 void thread2()
 {
-	if (cyw43_arch_init())
+	if (cyw43_arch_init_with_country(CYW43_COUNTRY_NETHERLANDS))
 		printf("failed to initialise\n");
 
 	cyw43_arch_enable_sta_mode();
 
-	if (cyw43_arch_wifi_connect_timeout_ms(W_SSID, W_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000))
-		printf("failed to connect\n");
+	netif_set_hostname(netif_default, "MainsData");
+
+	int rc = -1;
+	do {
+		rc = cyw43_arch_wifi_connect_timeout_ms(W_SSID, W_PASS, CYW43_AUTH_WPA2_MIXED_PSK, 10000);
+		if (rc)
+			printf("failed to connect %d\n", rc);
+
+	}
+	while(rc != 0);
+
+	printf("connect to wifi\n");
+
+	printf("IP: %s\n", ip4addr_ntoa(netif_ip_addr4(netif_default)));
+        printf("Mask: %s\n", ip4addr_ntoa(netif_ip_netmask4(netif_default)));
+        printf("Gateway: %s\n", ip4addr_ntoa(netif_ip_gw4(netif_default)));
+        printf("Host name: %s\n", netif_get_hostname(netif_default));
+
+	ip_addr_t dnsServerIp;
+	IP_ADDR4( &dnsServerIp, 8, 8, 8, 8);
+	dns_setserver(0, &dnsServerIp);
+	
+//	cyw43_arch_lwip_begin();
+
+	printf("start dns lookup\n");
+
+	dns_gethostbyname("vps001.vanheusden.com", &MQTT_HOST, dns_found, &MQTT_HOST);
+
+	while(!hostname_found) {
+#if PICO_CYW43_ARCH_POLL
+		cyw43_arch_poll();
+#endif
+		sleep_ms(10);
+	}
+
+	printf("hostname found: %s\n", ipaddr_ntoa(&MQTT_HOST));
+
+//	cyw43_arch_lwip_end();
+
+	do_mqtt_connect(&static_client);
 
 	for(;;) {
 		gpio_put(LED_PIN, 1);
@@ -275,11 +332,15 @@ void thread2()
 
 		publish_mqtt(&static_client, "mains/ac-voltager-rms", buffer_ac_volt_rms);
 	}
+
+	cyw43_arch_deinit();
 }
 
 int main(int argc, char *argv[])
 {
 	stdio_init_all();
+
+	sleep_ms(2500);
 
 	printf("Init ADC\n");
 
@@ -304,8 +365,6 @@ int main(int argc, char *argv[])
 
 	for(;;)
 		sleep_ms(1000);
-
-	cyw43_arch_deinit();
 
 	return 0;
 }
