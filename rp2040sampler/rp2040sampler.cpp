@@ -242,6 +242,14 @@ static void do_mqtt_connect(mqtt_client_t *client)
 
 void thread2()
 {
+	if (cyw43_arch_init())
+		printf("failed to initialise\n");
+
+	cyw43_arch_enable_sta_mode();
+
+	if (cyw43_arch_wifi_connect_timeout_ms(W_SSID, W_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000))
+		printf("failed to connect\n");
+
 	for(;;) {
 		gpio_put(LED_PIN, 1);
 
@@ -273,31 +281,29 @@ int main(int argc, char *argv[])
 {
 	stdio_init_all();
 
+	printf("Init ADC\n");
+
 	adc_init();
 	adc_gpio_init(26);
 	adc_select_input(0);
 
+	printf("Init GPIO\n");
+
 	gpio_init(LED_PIN);
 	gpio_set_dir(LED_PIN, GPIO_OUT);
 
-	if (cyw43_arch_init()) {
-		printf("failed to initialise\n");
-	        return 1;
-	}
-
-	cyw43_arch_enable_sta_mode();
-
-	if (cyw43_arch_wifi_connect_timeout_ms(W_SSID, W_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000)) {
-		printf("failed to connect\n");
-		return 1;
-	}
+	printf("Start timer\n");
 
 	add_repeating_timer_us(-1000000 / SAMPLE_FREQUENCY, timer_isr, nullptr, &timer);
 
+	printf("Start core 1\n");
+
 	multicore_launch_core1(thread2);
 
+	printf("Core 0 - sleep for timer\n");
+
 	for(;;)
-		sleep_ms(1);
+		sleep_ms(1000);
 
 	cyw43_arch_deinit();
 
