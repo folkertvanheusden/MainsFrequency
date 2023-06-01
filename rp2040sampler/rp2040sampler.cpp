@@ -30,7 +30,7 @@ static inline uint32_t millis(void) { return to_ms_since_boot(get_absolute_time(
 
 static ip_addr_t MQTT_HOST;
 
-static mqtt_client_t static_client;
+static mqtt_client_t static_client { 0 };
 
 static char line[120];
 
@@ -219,6 +219,8 @@ static void mqtt_pub_request_cb(void *arg, err_t result)
         printf("Publish failed\n");
 }
 
+static int mqtt_failures = 0;
+
 void publish_mqtt(mqtt_client_t *client, const char *topic, const char *what)
 {
     u8_t qos = 2;  // 0 1 or 2, see MQTT specification
@@ -226,7 +228,7 @@ void publish_mqtt(mqtt_client_t *client, const char *topic, const char *what)
 
     err_t err = mqtt_publish(client, topic, what, strlen(what), qos, retain, mqtt_pub_request_cb, nullptr);
     if (err != ERR_OK)
-        printf("mqtt_publish failed: %d\n", err);
+        printf("mqtt_publish failed: %d\n", err), mqtt_failures++;
 }
 
 static void do_mqtt_connect(mqtt_client_t *client);
@@ -234,9 +236,9 @@ static void do_mqtt_connect(mqtt_client_t *client);
 static void mqtt_connection_cb(mqtt_client_t *client, void *arg, mqtt_connection_status_t status)
 {
     if (status == MQTT_CONNECT_ACCEPTED)
-        printf("mqtt_connection_cb: Successfully connected\n");
+        printf("mqtt_connection_cb: successfully connected\n"), mqtt_failures = 0;
     else {
-        printf("mqtt_connection_cb: Disconnected, reason: %d\n", status);
+        printf("mqtt_connection_cb: disconnected, reason: %d\n", status);
 
         do_mqtt_connect(client);
     }
@@ -268,7 +270,13 @@ static void do_mqtt_connect(mqtt_client_t *client)
 	err_t err = mqtt_client_connect(client, &MQTT_HOST, MQTT_PORT, mqtt_connection_cb, 0, &ci);
 
 	if (err != ERR_OK)
-		printf("Failed to connect to MQTT server\n");
+		printf("Failed to connect to MQTT server\n"), mqtt_failures++;
+}
+
+static void software_reset()
+{
+    watchdog_enable(1, 1);
+    while(1);
 }
 
 void thread2()
@@ -285,7 +293,6 @@ void thread2()
 		rc = cyw43_arch_wifi_connect_timeout_ms(W_SSID, W_PASS, CYW43_AUTH_WPA2_MIXED_PSK, 10000);
 		if (rc)
 			printf("failed to connect %d\n", rc);
-
 	}
 	while(rc != 0);
 
@@ -327,9 +334,21 @@ void thread2()
 
 //	pzem.search();
 
-	do_mqtt_connect(&static_client);
-
 	for(;;) {
+		watchdog_update();
+
+		if (mqtt_failures >= 3) {
+			if (mqtt_failures >= 6) {
+				// reboot
+				software_reset();
+			}
+
+			mqtt_disconnect(&static_client);
+		}
+
+		if (mqtt_client_is_connected(&static_client) == 0)
+			do_mqtt_connect(&static_client);
+
 		watchdog_update();
 
 		gpio_put(LED1_PIN, 1);
