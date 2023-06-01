@@ -8,16 +8,17 @@
 #include "lwip/netdb.h"
 
 #include "hardware/adc.h"
+#include "hardware/flash.h"
 #include "hardware/watchdog.h"
 #include "pico/cyw43_arch.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
 
-#include "TrueRMS/src/TrueRMS.h"
+#include "statemachine.h"
 
 #include "PZEM-004T-v30/src/PZEM004Tv30.h"
 
-#include "statemachine.h"
+#include "TrueRMS/src/TrueRMS.h"
 
 #define LED1_PIN 25
 #define LED2_PIN 17
@@ -48,6 +49,8 @@ static volatile uint16_t latest_reading = 0;
 static repeating_timer timer;
 
 static int tt = 0;
+
+char sys_id[5] { 0 };
 
 bool timer_isr(struct repeating_timer *t)
 {
@@ -219,14 +222,17 @@ static void mqtt_pub_request_cb(void *arg, err_t result)
 
 static int mqtt_failures = 0;
 
-static void publish_mqtt(mqtt_client_t *client, const char *topic, const char *what)
+static void publish_mqtt(mqtt_client_t *client, const char *sys_id, const char *topic, const char *what)
 {
 	u8_t qos = 2;  // 0 1 or 2, see MQTT specification
 	u8_t retain = 0;  // don't retain
 
-	printf("%s -> %s\n", topic, what);
+	char buffer[128];
+	snprintf(buffer, sizeof buffer, "mains/%s/%s", sys_id, topic);
 
-	err_t err = mqtt_publish(client, topic, what, strlen(what), qos, retain, mqtt_pub_request_cb, nullptr);
+	printf("%s -> %s\n", buffer, what);
+
+	err_t err = mqtt_publish(client, buffer, what, strlen(what), qos, retain, mqtt_pub_request_cb, nullptr);
 	if (err != ERR_OK)
 		printf("mqtt_publish failed: %d\n", err), mqtt_failures++;
 	else
@@ -239,12 +245,12 @@ static void publish_mqtt(mqtt_client_t *client, const char *topic, const char *w
 	}
 }
 
-static void publish_mqtt(mqtt_client_t *client, const char *topic, const double value)
+static void publish_mqtt(mqtt_client_t *client, const char *sys_id, const char *topic, const double value)
 {
 	char buffer[16] { 0 };
 	snprintf(buffer, sizeof buffer, "%.06f", value);
 
-	publish_mqtt(client, topic, buffer);
+	publish_mqtt(client, sys_id, topic, buffer);
 }
 
 static void do_mqtt_connect(mqtt_client_t *client);
@@ -281,7 +287,9 @@ static void do_mqtt_connect(mqtt_client_t *client)
 {
 	mqtt_connect_client_info_t ci { 0 };
 
-	ci.client_id = "MainsData";
+	static char client_id[16] { 0 };
+	snprintf(client_id, sizeof client_id, "MainsData-%s", sys_id);
+	ci.client_id = client_id;
 
 	err_t err = mqtt_client_connect(client, &MQTT_HOST, MQTT_PORT, mqtt_connection_cb, 0, &ci);
 
@@ -341,7 +349,7 @@ void thread2()
 
 		watchdog_update();
 
-		if (millis() - starts_ts > 5000) {
+		if (millis() - start_ts > 5000) {
 			printf("DNS not responding?\n");
 
 			software_reset();
@@ -384,33 +392,33 @@ void thread2()
 		double diff = 0;
 		do_measure(&hz, &ac_volt_rms, &dc_bias, &variance, &diff);
 
-		publish_mqtt(&static_client, "mains/diff", double(diff));
+		publish_mqtt(&static_client, sys_id, "diff", double(diff));
 
-		publish_mqtt(&static_client, "mains/variance", variance);
+		publish_mqtt(&static_client, sys_id, "variance", variance);
 
-		publish_mqtt(&static_client, "mains/frequency", hz);
+		publish_mqtt(&static_client, sys_id, "frequency", hz);
 
-		publish_mqtt(&static_client, "mains/ac-voltager-rms", ac_volt_rms);
+		publish_mqtt(&static_client, sys_id, "ac-voltager-rms", ac_volt_rms);
 
-		publish_mqtt(&static_client, "mains/dc-bias", dc_bias);
+		publish_mqtt(&static_client, sys_id, "dc-bias", dc_bias);
 
 		float voltage = pzem.voltage();
 		if (voltage > 0 && voltage < 300)
-			publish_mqtt(&static_client, "mains/pzem/voltage", voltage);
+			publish_mqtt(&static_client, sys_id, "pzem/voltage", voltage);
 
 		float frequency2 = pzem.frequency();
 		if (frequency2 > 10 && frequency2 < 100)
-			publish_mqtt(&static_client, "mains/pzem/frequency", frequency2);
+			publish_mqtt(&static_client, sys_id, "pzem/frequency", frequency2);
 
 		float current = pzem.current();
 		if (current >= 0 && current < 100)
-			publish_mqtt(&static_client, "mains/pzem/current", current);
+			publish_mqtt(&static_client, sys_id, "pzem/current", current);
 
-		publish_mqtt(&static_client, "mains/pzem/power", pzem.power());
+		publish_mqtt(&static_client, sys_id, "pzem/power", pzem.power());
 
-		publish_mqtt(&static_client, "mains/pzem/energy", pzem.energy());
+		publish_mqtt(&static_client, sys_id, "pzem/energy", pzem.energy());
 
-		publish_mqtt(&static_client, "mains/pzem/factor", pzem.pf());
+		publish_mqtt(&static_client, sys_id, "pzem/factor", pzem.pf());
 	}
 
 	cyw43_arch_deinit();
@@ -447,6 +455,18 @@ int main(int argc, char *argv[])
 	printf("Start timer\n");
 
 	add_repeating_timer_us(-1000000 / SAMPLE_FREQUENCY, timer_isr, nullptr, &timer);
+
+	uint8_t sys_id_temp[8];
+	flash_get_unique_id(sys_id_temp);
+	// fold in half
+	for(int i=0; i<4; i++)
+		sys_id_temp[i] ^= sys_id_temp[i + 4];
+	// and again
+	for(int i=0; i<2; i++)
+		sys_id_temp[i] ^= sys_id_temp[i + 2];
+	snprintf(sys_id, sizeof sys_id, "%02x%02x", sys_id_temp[0], sys_id_temp[1]);
+
+	printf("System ID: %s\n", sys_id);
 
 	printf("Start core 1\n");
 

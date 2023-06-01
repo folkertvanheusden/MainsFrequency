@@ -52,6 +52,15 @@
 
 #include "TrueRMS.h"
 
+#include "pico/stdlib.h"
+
+#include <stdint.h>
+static inline uint32_t millis(void) { return to_ms_since_boot(get_absolute_time()); }
+
+double sq(double v)
+{
+	return v * v;
+}
 
 //*********** Init functions ***********//
 
