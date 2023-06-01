@@ -51,184 +51,192 @@ static int tt = 0;
 
 bool timer_isr(struct repeating_timer *t)
 {
-    int_count++;
-    uint32_t next = (bufw + 1) % BUF_SIZE;
-    if (!overflow) {
-        if (next != bufr) {
-            latest_reading = buffer[bufw] = adc_read();
-            tt++;
-            bufw = next;
-        } else {
-            overflow = true;
-        }
-    }
+	int_count++;
+	uint32_t next = (bufw + 1) % BUF_SIZE;
+	if (!overflow) {
+		if (next != bufr) {
+			latest_reading = buffer[bufw] = adc_read();
+			tt++;
+			bufw = next;
+		} else {
+			overflow = true;
+		}
+	}
 
-    return true;
+	return true;
 }
 
 static int compare_uint16(const void *v1, const void *v2)
 {
-    uint16_t u1 = *((uint16_t *) v1);
-    uint16_t u2 = *((uint16_t *) v2);
-    return u1 - u2;
+	uint16_t u1 = *((uint16_t *) v1);
+	uint16_t u2 = *((uint16_t *) v2);
+	return u1 - u2;
 }
 
 static void sample_reset(void)
 {
-    bufr = 0;
-    bufw = 0;
-    overflow = false;
+	bufr = 0;
+	bufw = 0;
+	overflow = false;
 }
 
 static bool sample_get(uint16_t * pval)
 {
-    if (bufr == bufw) {
-        return false;
-    }
-    int next = (bufr + 1) % BUF_SIZE;
-    *pval = buffer[bufr];
-    bufr = next;
-    return true;
+	if (bufr == bufw) {
+		return false;
+	}
+	int next = (bufr + 1) % BUF_SIZE;
+	*pval = buffer[bufr];
+	bufr = next;
+	return true;
 }
 
 // https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
 class welford
 {
-private:
-	int count { 0 };
-	double mean { 0. };
-	double M2 { 0. };
+	private:
+		int count { 0 };
+		double mean { 0. };
+		double M2 { 0. };
 
-public:
-	welford() {
-	}
+	public:
+		welford() {
+		}
 
-	void update(double newValue) {
-		count++;
-		double delta = newValue - mean;
-		mean += delta / count;
-		double delta2 = newValue - mean;
-		M2 += delta * delta2;
-	}
+		void update(double newValue) {
+			count++;
+			double delta = newValue - mean;
+			mean += delta / count;
+			double delta2 = newValue - mean;
+			M2 += delta * delta2;
+		}
 
-	// mean, variance, sample variance
-	std::optional<std::tuple<double, double, double> > get() {
-		if (count < 2)
-			return { };
+		// mean, variance, sample variance
+		std::optional<std::tuple<double, double, double> > get() {
+			if (count < 2)
+				return { };
 
-		return { { mean, M2 / count, M2 / (count - 1) } };
-	}
+			return { { mean, M2 / count, M2 / (count - 1) } };
+		}
 };
 
 static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bias, double *variance, double *diff)
 {
-    // take stats
-    sample_reset();
-    while (!overflow) sleep_ms(1);
-    qsort(buffer, BUF_SIZE, sizeof(uint16_t), compare_uint16);
-    uint16_t q1 = buffer[2 * BUF_SIZE / 8];
-    uint16_t med = buffer[4 * BUF_SIZE / 8];
-    uint16_t q3 = buffer[6 * BUF_SIZE / 8];
+	// take stats
+	sample_reset();
+	while (!overflow) sleep_ms(1);
+	qsort(buffer, BUF_SIZE, sizeof(uint16_t), compare_uint16);
+	uint16_t q1 = buffer[2 * BUF_SIZE / 8];
+	uint16_t med = buffer[4 * BUF_SIZE / 8];
+	uint16_t q3 = buffer[6 * BUF_SIZE / 8];
 
-    constexpr int window = SAMPLE_FREQUENCY / 50 * 4;
+	constexpr int window = SAMPLE_FREQUENCY / 50 * 4;
 
-    constexpr int RMS_WINDOW = window;  // "TrueRMS" library limited this variable to 8 bits
-    constexpr float acVoltRange = 500;  // peak-to-peak voltage scaled down to 0-5V is 700V (=700/2*sqrt(2) = 247.5Vrms max).
-    Rms readRms;
-    readRms.begin(acVoltRange, RMS_WINDOW, ADC_12BIT, BLR_ON, SGL_SCAN);
-    readRms.start();
+	constexpr int RMS_WINDOW = window;  // "TrueRMS" library limited this variable to 8 bits
+	constexpr float acVoltRange = 500;  // peak-to-peak voltage scaled down to 0-5V is 700V (=700/2*sqrt(2) = 247.5Vrms max).
+	Rms readRms;
+	readRms.begin(acVoltRange, RMS_WINDOW, ADC_12BIT, BLR_ON, SGL_SCAN);
+	readRms.start();
 
-    welford w;
+	welford w;
 
-    // determine zero crossings
-    sample_reset();
-    StateMachine sm(q1 - med, q3 - med);
-    int t = 0;
-    uint32_t start = millis();
-    double first = 0.0;
-    double last = 0.0;
-    int count = 0;
-    bool done = false;
-    bool do_rms = true;
-    bool rms_started = false;
-    double max_ = -65535, min_ = 65535;
-    while (!done && ((millis() - start) < 3000)) {
-        uint16_t temp = 0;
-        if (sample_get(&temp)) {
-            int16_t signed_value = temp - 2048;
-            double frag = signed_value / 2048.;
-            if (rms_started) {
-                 readRms.update(signed_value);
-	         w.update(frag);
-	         if (frag > max_) max_ = frag;
-     	         if (frag < min_) min_ = frag;
-            }
-            double value = temp;
-            double time = (double)t / SAMPLE_FREQUENCY;
-            if (sm.process(time, value - med)) {
-                switch (count) {
-                case 0:
-                    gpio_put(LED2_PIN, 1);
-                    first = sm.get_result();
-                    rms_started = do_rms;
-                    break;
-                case 4:
-                    rms_started = false;
-                    do_rms = false;
-                    break;
-		case 25:
-                    gpio_put(LED2_PIN, 0);
-		    break;
-                case 50:
-                    last = sm.get_result();
-                    done = true;
-                    break;
-                default:
-                    break;
-                }
-                count++;
-            }
-            t++;
-        }
-    }
+	// determine zero crossings
+	sample_reset();
+	StateMachine sm(q1 - med, q3 - med);
+	int t = 0;
+	uint32_t start = millis();
+	double first = 0.0;
+	double last = 0.0;
+	int count = 0;
+	bool done = false;
+	bool do_rms = true;
+	bool rms_started = false;
+	double max_ = -65535, min_ = 65535;
+	while (!done && ((millis() - start) < 3000)) {
+		uint16_t temp = 0;
+		if (sample_get(&temp)) {
+			int16_t signed_value = temp - 2048;
+			double frag = signed_value / 2048.;
+			if (rms_started) {
+				readRms.update(signed_value);
+				w.update(frag);
+				if (frag > max_) max_ = frag;
+				if (frag < min_) min_ = frag;
+			}
+			double value = temp;
+			double time = (double)t / SAMPLE_FREQUENCY;
+			if (sm.process(time, value - med)) {
+				switch (count) {
+					case 0:
+						gpio_put(LED2_PIN, 1);
+						first = sm.get_result();
+						rms_started = do_rms;
+						break;
+					case 4:
+						rms_started = false;
+						do_rms = false;
+						break;
+					case 25:
+						gpio_put(LED2_PIN, 0);
+						break;
+					case 50:
+						last = sm.get_result();
+						done = true;
+						break;
+					default:
+						break;
+				}
+				count++;
+			}
+			t++;
+		}
+	}
 
-    readRms.publish();
+	readRms.publish();
 
-    *hz = 50.0 / (last - first);
+	*hz = 50.0 / (last - first);
 
-    auto w_resul = w.get();
+	auto w_resul = w.get();
 
-    if (w_resul.has_value())
-        *variance = std::get<1>(w_resul.value());
-    else
-        *variance = -1.;
+	if (w_resul.has_value())
+		*variance = std::get<1>(w_resul.value());
+	else
+		*variance = -1.;
 
-    // 3.205: assuming voltage divider of 5.6k and 10k ohm
-    *ac_volt_rms = readRms.rmsVal * (3.3 / 3.205);
+	// 3.205: assuming voltage divider of 5.6k and 10k ohm
+	*ac_volt_rms = readRms.rmsVal * (3.3 / 3.205);
 
-    *volt_dc_bias = readRms.dcBias;
+	*volt_dc_bias = readRms.dcBias;
 
-    *diff = max_ - min_;
+	*diff = max_ - min_;
 }
 
 static void mqtt_pub_request_cb(void *arg, err_t result)
 {
-    if (result != ERR_OK)
-        printf("Publish failed\n");
+	if (result != ERR_OK)
+		printf("Publish failed\n");
 }
 
 static int mqtt_failures = 0;
 
 static void publish_mqtt(mqtt_client_t *client, const char *topic, const char *what)
 {
-    u8_t qos = 2;  // 0 1 or 2, see MQTT specification
-    u8_t retain = 0;  // don't retain
+	u8_t qos = 2;  // 0 1 or 2, see MQTT specification
+	u8_t retain = 0;  // don't retain
 
-    printf("%s -> %s\n", topic, what);
+	printf("%s -> %s\n", topic, what);
 
-    err_t err = mqtt_publish(client, topic, what, strlen(what), qos, retain, mqtt_pub_request_cb, nullptr);
-    if (err != ERR_OK)
-        printf("mqtt_publish failed: %d\n", err), mqtt_failures++;
+	err_t err = mqtt_publish(client, topic, what, strlen(what), qos, retain, mqtt_pub_request_cb, nullptr);
+	if (err != ERR_OK)
+		printf("mqtt_publish failed: %d\n", err), mqtt_failures++;
+	else
+	{
+		static int pin_state = 1;
+
+		gpio_put(LED1_PIN, pin_state);
+
+		pin_state = !pin_state;
+	}
 }
 
 static void publish_mqtt(mqtt_client_t *client, const char *topic, const double value)
@@ -243,13 +251,13 @@ static void do_mqtt_connect(mqtt_client_t *client);
 
 static void mqtt_connection_cb(mqtt_client_t *client, void *arg, mqtt_connection_status_t status)
 {
-    if (status == MQTT_CONNECT_ACCEPTED)
-        printf("mqtt_connection_cb: successfully connected\n"), mqtt_failures = 0;
-    else {
-        printf("mqtt_connection_cb: disconnected, reason: %d\n", status);
+	if (status == MQTT_CONNECT_ACCEPTED)
+		printf("mqtt_connection_cb: successfully connected\n"), mqtt_failures = 0;
+	else {
+		printf("mqtt_connection_cb: disconnected, reason: %d\n", status);
 
-        do_mqtt_connect(client);
-    }
+		do_mqtt_connect(client);
+	}
 }
 
 bool hostname_found = false;
@@ -283,8 +291,8 @@ static void do_mqtt_connect(mqtt_client_t *client)
 
 static void software_reset()
 {
-    watchdog_enable(1, 1);
-    while(1);
+	watchdog_enable(1, 1);
+	while(1);
 }
 
 void thread2()
@@ -307,21 +315,23 @@ void thread2()
 	printf("connect to wifi\n");
 
 	printf("IP: %s\n", ip4addr_ntoa(netif_ip_addr4(netif_default)));
-        printf("Mask: %s\n", ip4addr_ntoa(netif_ip_netmask4(netif_default)));
-        printf("Gateway: %s\n", ip4addr_ntoa(netif_ip_gw4(netif_default)));
-        printf("Host name: %s\n", netif_get_hostname(netif_default));
+	printf("Mask: %s\n", ip4addr_ntoa(netif_ip_netmask4(netif_default)));
+	printf("Gateway: %s\n", ip4addr_ntoa(netif_ip_gw4(netif_default)));
+	printf("Host name: %s\n", netif_get_hostname(netif_default));
 
 	ip_addr_t dnsServerIp;
 	IP_ADDR4(&dnsServerIp, 8, 8, 8, 8);
 	dns_setserver(0, &dnsServerIp);
-	
-//	cyw43_arch_lwip_begin();
+
+	//	cyw43_arch_lwip_begin();
 
 	printf("start dns lookup\n");
 
 	dns_gethostbyname("vps001.vanheusden.com", &MQTT_HOST, dns_found, &MQTT_HOST);
 
 	watchdog_enable(2000, 1);
+
+	uint32_t start_ts = millis();
 
 	while(!hostname_found) {
 #if PICO_CYW43_ARCH_POLL
@@ -330,17 +340,23 @@ void thread2()
 		sleep_ms(10);
 
 		watchdog_update();
+
+		if (millis() - starts_ts > 5000) {
+			printf("DNS not responding?\n");
+
+			software_reset();
+		}
 	}
 
 	printf("hostname found: %s\n", ipaddr_ntoa(&MQTT_HOST));
 
-//	cyw43_arch_lwip_end();
+	//	cyw43_arch_lwip_end();
 
 	PZEM004Tv30 pzem;
 
 	printf("addr: %02x\n", pzem.readAddress(true));
 
-//	pzem.search();
+	//	pzem.search();
 
 	for(;;) {
 		watchdog_update();
@@ -348,9 +364,11 @@ void thread2()
 		if (mqtt_failures >= 3) {
 			if (mqtt_failures >= 6) {
 				// reboot
+				printf("failure count too high (%d)\n", mqtt_failures);
 				software_reset();
 			}
 
+			printf("Forcing mqtt reconnect (%d)\n", mqtt_failures);
 			mqtt_disconnect(&static_client);
 		}
 
@@ -359,16 +377,12 @@ void thread2()
 
 		watchdog_update();
 
-		gpio_put(LED1_PIN, 1);
-
 		double ac_volt_rms = 0.;
 		double dc_bias = 0.;
 		double hz = 0.;
 		double variance = 0.;
 		double diff = 0;
 		do_measure(&hz, &ac_volt_rms, &dc_bias, &variance, &diff);
-
-		gpio_put(LED1_PIN, 0);
 
 		publish_mqtt(&static_client, "mains/diff", double(diff));
 
@@ -380,15 +394,15 @@ void thread2()
 
 		publish_mqtt(&static_client, "mains/dc-bias", dc_bias);
 
- 		float voltage = pzem.voltage();
+		float voltage = pzem.voltage();
 		if (voltage > 0 && voltage < 300)
 			publish_mqtt(&static_client, "mains/pzem/voltage", voltage);
- 
- 		float frequency2 = pzem.frequency();
+
+		float frequency2 = pzem.frequency();
 		if (frequency2 > 10 && frequency2 < 100)
 			publish_mqtt(&static_client, "mains/pzem/frequency", frequency2);
- 
- 		float current = pzem.current();
+
+		float current = pzem.current();
 		if (current >= 0 && current < 100)
 			publish_mqtt(&static_client, "mains/pzem/current", current);
 
