@@ -12,6 +12,7 @@ set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
 add_executable(mainsdata
+	PZEM-004T-v30/src/PZEM004Tv30.cpp
 	regression.cpp
 	statemachine.cpp
 	rp2040sampler.cpp)
