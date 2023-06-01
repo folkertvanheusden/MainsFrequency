@@ -13,6 +13,7 @@ pico_sdk_init()
 
 add_executable(mainsdata
 	PZEM-004T-v30/src/PZEM004Tv30.cpp
+	TrueRMS/src/TrueRMS.cpp
 	regression.cpp
 	statemachine.cpp
 	rp2040sampler.cpp)

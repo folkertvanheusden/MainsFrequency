@@ -13,7 +13,7 @@
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
 
-//#include "TrueRMS/src/TrueRMS.h"
+#include "TrueRMS/src/TrueRMS.h"
 
 #include "PZEM-004T-v30/src/PZEM004Tv30.h"
 
@@ -132,11 +132,11 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
 
     constexpr int window = SAMPLE_FREQUENCY / 50 * 4;
 
-//    constexpr int RMS_WINDOW = window;  // "TrueRMS" library limited this variable to 8 bits
-//    constexpr float acVoltRange = 500;  // peak-to-peak voltage scaled down to 0-5V is 700V (=700/2*sqrt(2) = 247.5Vrms max).
-//    Rms readRms;
-//    readRms.begin(acVoltRange, RMS_WINDOW, ADC_12BIT, BLR_ON, SGL_SCAN);
-//    readRms.start();
+    constexpr int RMS_WINDOW = window;  // "TrueRMS" library limited this variable to 8 bits
+    constexpr float acVoltRange = 500;  // peak-to-peak voltage scaled down to 0-5V is 700V (=700/2*sqrt(2) = 247.5Vrms max).
+    Rms readRms;
+    readRms.begin(acVoltRange, RMS_WINDOW, ADC_12BIT, BLR_ON, SGL_SCAN);
+    readRms.start();
 
     welford w;
 
@@ -158,7 +158,7 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
             int16_t signed_value = temp - 2048;
             double frag = signed_value / 2048.;
             if (rms_started) {
-                 //readRms.update(signed_value);
+                 readRms.update(signed_value);
 	         w.update(frag);
 	         if (frag > max_) max_ = frag;
      	         if (frag < min_) min_ = frag;
@@ -192,7 +192,7 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
         }
     }
 
-    //readRms.publish();
+    readRms.publish();
 
     *hz = 50.0 / (last - first);
 
@@ -204,13 +204,11 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
         *variance = -1.;
 
     // 3.205: assuming voltage divider of 5.6k and 10k ohm
-    //*ac_volt_rms = readRms.rmsVal * (3.3 / 3.205);
-	*ac_volt_rms = -1.0;
+    *ac_volt_rms = readRms.rmsVal * (3.3 / 3.205);
 
-    //*volt_dc_bias = readRms.dcBias;
-	*volt_dc_bias = -1.0;
+    *volt_dc_bias = readRms.dcBias;
 
-	*diff = max_ - min_;
+    *diff = max_ - min_;
 }
 
 static void mqtt_pub_request_cb(void *arg, err_t result)
@@ -221,14 +219,24 @@ static void mqtt_pub_request_cb(void *arg, err_t result)
 
 static int mqtt_failures = 0;
 
-void publish_mqtt(mqtt_client_t *client, const char *topic, const char *what)
+static void publish_mqtt(mqtt_client_t *client, const char *topic, const char *what)
 {
     u8_t qos = 2;  // 0 1 or 2, see MQTT specification
     u8_t retain = 0;  // don't retain
 
+    printf("%s -> %s\n", topic, what);
+
     err_t err = mqtt_publish(client, topic, what, strlen(what), qos, retain, mqtt_pub_request_cb, nullptr);
     if (err != ERR_OK)
         printf("mqtt_publish failed: %d\n", err), mqtt_failures++;
+}
+
+static void publish_mqtt(mqtt_client_t *client, const char *topic, const double value)
+{
+	char buffer[16] { 0 };
+	snprintf(buffer, sizeof buffer, "%.06f", value);
+
+	publish_mqtt(client, topic, buffer);
 }
 
 static void do_mqtt_connect(mqtt_client_t *client);
@@ -362,48 +370,33 @@ void thread2()
 
 		gpio_put(LED1_PIN, 0);
 
-		char buffer_diff[16] { 0 };
-		snprintf(buffer_diff, sizeof buffer_diff, "%.06f", diff);
-		printf("%s ", buffer_diff);
-		publish_mqtt(&static_client, "mains/diff", buffer_diff);
+		publish_mqtt(&static_client, "mains/diff", double(diff));
 
-		char buffer_variance[16] { 0 };
-		snprintf(buffer_variance, sizeof buffer_variance, "%.6f", variance);
-		printf("%s ", buffer_variance);
-		publish_mqtt(&static_client, "mains/variance", buffer_variance);
+		publish_mqtt(&static_client, "mains/variance", variance);
 
-		char buffer_hz[16] { 0 };
-		snprintf(buffer_hz, sizeof buffer_hz, "%.6f", hz);
-		printf("%s ", buffer_hz);
-		publish_mqtt(&static_client, "mains/frequency", buffer_hz);
+		publish_mqtt(&static_client, "mains/frequency", hz);
 
-		char buffer_ac_volt_rms[16] { 0 };
-		snprintf(buffer_ac_volt_rms, sizeof buffer_ac_volt_rms, "%.6f", ac_volt_rms);
-		printf("%s\n", buffer_ac_volt_rms);
-		publish_mqtt(&static_client, "mains/ac-voltager-rms", buffer_ac_volt_rms);
+		publish_mqtt(&static_client, "mains/ac-voltager-rms", ac_volt_rms);
 
- 		char buffer_voltage[16] { 0 };
+		publish_mqtt(&static_client, "mains/dc-bias", dc_bias);
+
  		float voltage = pzem.voltage();
-		if (voltage > 0 && voltage < 300) {
-			snprintf(buffer_voltage, sizeof buffer_voltage, "%.6f", voltage);
-			printf("V:%s ", buffer_voltage);
-			publish_mqtt(&static_client, "mains/pzem/voltage", buffer_voltage);
-		}
+		if (voltage > 0 && voltage < 300)
+			publish_mqtt(&static_client, "mains/pzem/voltage", voltage);
  
- //		float current = pzem.current();
- //		float power = pzem.power();
- //		float energy = pzem.energy();
- //		float pf = pzem.pf();
- 
- 		float frequency = pzem.frequency();
- 
- 		char buffer_frequency[16] { 0 };
  		float frequency2 = pzem.frequency();
-		if (frequency2 > 10 && frequency2 < 100) {
-			snprintf(buffer_frequency, sizeof buffer_frequency, "%.6f", frequency2);
-			printf("F:%s ", buffer_frequency);
-			publish_mqtt(&static_client, "mains/pzem/frequency", buffer_frequency);
-		}
+		if (frequency2 > 10 && frequency2 < 100)
+			publish_mqtt(&static_client, "mains/pzem/frequency", frequency2);
+ 
+ 		float current = pzem.current();
+		if (current >= 0 && current < 100)
+			publish_mqtt(&static_client, "mains/pzem/current", current);
+
+		publish_mqtt(&static_client, "mains/pzem/power", pzem.power());
+
+		publish_mqtt(&static_client, "mains/pzem/energy", pzem.energy());
+
+		publish_mqtt(&static_client, "mains/pzem/factor", pzem.pf());
 	}
 
 	cyw43_arch_deinit();
