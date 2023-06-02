@@ -18,8 +18,6 @@
 
 #include "PZEM-004T-v30/src/PZEM004Tv30.h"
 
-#include "TrueRMS/src/TrueRMS.h"
-
 #define LED1_PIN 25
 #define LED2_PIN 17
 
@@ -116,7 +114,7 @@ class welford
 		}
 };
 
-static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bias, double *variance, double *diff)
+static void do_measure(double *const hz, double *variance, double *diff)
 {
 	// take stats
 	sample_reset();
@@ -126,14 +124,6 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
 	uint16_t q1 = buffer[2 * BUF_SIZE / 8];
 	uint16_t med = buffer[4 * BUF_SIZE / 8];
 	uint16_t q3 = buffer[6 * BUF_SIZE / 8];
-
-	constexpr int window = SAMPLE_FREQUENCY / 50 * 4;
-
-	constexpr int RMS_WINDOW = window;  // "TrueRMS" library limited this variable to 8 bits
-	constexpr float acVoltRange = 500;  // peak-to-peak voltage scaled down to 0-5V is 700V (=700/2*sqrt(2) = 247.5Vrms max).
-	Rms readRms;
-	readRms.begin(acVoltRange, RMS_WINDOW, ADC_12BIT, BLR_ON, SGL_SCAN);
-	readRms.start();
 
 	welford w;
 
@@ -155,7 +145,6 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
 			int16_t signed_value = temp - 2048;
 			double frag = signed_value / 2048.;
 			if (rms_started) {
-				readRms.update(signed_value);
 				w.update(frag);
 				if (frag > max_) max_ = frag;
 				if (frag < min_) min_ = frag;
@@ -189,8 +178,6 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
 		}
 	}
 
-	readRms.publish();
-
 	*hz = 50.0 / (last - first);
 
 	auto w_resul = w.get();
@@ -199,11 +186,6 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
 		*variance = std::get<1>(w_resul.value());
 	else
 		*variance = -1.;
-
-	// 3.205: assuming voltage divider of 5.6k and 10k ohm
-	*ac_volt_rms = readRms.rmsVal * (3.3 / 3.205);
-
-	*volt_dc_bias = readRms.dcBias;
 
 	*diff = max_ - min_;
 }
@@ -237,7 +219,7 @@ static void publish_mqtt(mqtt_client_t *client, const char *sys_id, const char *
 
 		pin_state = !pin_state;
 		
-		mqtt_failures = 0
+		mqtt_failures = 0;
 	}
 }
 
@@ -381,22 +363,16 @@ void thread2()
 
 		watchdog_update();
 
-		double ac_volt_rms = 0.;
-		double dc_bias = 0.;
 		double hz = 0.;
 		double variance = 0.;
 		double diff = 0;
-		do_measure(&hz, &ac_volt_rms, &dc_bias, &variance, &diff);
+		do_measure(&hz, &variance, &diff);
 
 		publish_mqtt(&static_client, sys_id, "diff", double(diff));
 
 		publish_mqtt(&static_client, sys_id, "variance", variance);
 
 		publish_mqtt(&static_client, sys_id, "frequency", hz);
-
-		publish_mqtt(&static_client, sys_id, "ac-voltager-rms", ac_volt_rms);
-
-		publish_mqtt(&static_client, sys_id, "dc-bias", dc_bias);
 
 		float voltage = pzem.voltage();
 		if (voltage > 0 && voltage < 300)
