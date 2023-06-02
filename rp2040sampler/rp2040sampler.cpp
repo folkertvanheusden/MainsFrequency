@@ -33,11 +33,6 @@ static ip_addr_t MQTT_HOST;
 
 static mqtt_client_t static_client { 0 };
 
-static char line[120];
-
-static uint32_t value = 0;
-static volatile uint32_t int_count = 0;
-
 // sample buffer
 #define BUF_SIZE    2048
 static uint16_t buffer[BUF_SIZE];
@@ -48,20 +43,18 @@ static volatile uint16_t latest_reading = 0;
 
 static repeating_timer timer;
 
-static int tt = 0;
-
 char sys_id[8] { 0 };
 
 bool timer_isr(struct repeating_timer *t)
 {
-	int_count++;
 	uint32_t next = (bufw + 1) % BUF_SIZE;
+
 	if (!overflow) {
 		if (next != bufr) {
 			latest_reading = buffer[bufw] = adc_read();
-			tt++;
 			bufw = next;
-		} else {
+		}
+		else {
 			overflow = true;
 		}
 	}
@@ -85,9 +78,9 @@ static void sample_reset(void)
 
 static bool sample_get(uint16_t * pval)
 {
-	if (bufr == bufw) {
+	if (bufr == bufw)
 		return false;
-	}
+
 	int next = (bufr + 1) % BUF_SIZE;
 	*pval = buffer[bufr];
 	bufr = next;
@@ -127,6 +120,7 @@ static void do_measure(double *const hz, double *ac_volt_rms, double *volt_dc_bi
 {
 	// take stats
 	sample_reset();
+
 	while (!overflow) sleep_ms(1);
 	qsort(buffer, BUF_SIZE, sizeof(uint16_t), compare_uint16);
 	uint16_t q1 = buffer[2 * BUF_SIZE / 8];
@@ -224,7 +218,7 @@ static int mqtt_failures = 0;
 
 static void publish_mqtt(mqtt_client_t *client, const char *sys_id, const char *topic, const char *what)
 {
-	u8_t qos = 2;  // 0 1 or 2, see MQTT specification
+	u8_t qos = 0;  // 0=at most once
 	u8_t retain = 0;  // don't retain
 
 	char buffer[128];
@@ -242,6 +236,8 @@ static void publish_mqtt(mqtt_client_t *client, const char *sys_id, const char *
 		gpio_put(LED1_PIN, pin_state);
 
 		pin_state = !pin_state;
+		
+		mqtt_failures = 0
 	}
 }
 
@@ -258,7 +254,7 @@ static void do_mqtt_connect(mqtt_client_t *client);
 static void mqtt_connection_cb(mqtt_client_t *client, void *arg, mqtt_connection_status_t status)
 {
 	if (status == MQTT_CONNECT_ACCEPTED)
-		printf("mqtt_connection_cb: successfully connected\n"), mqtt_failures = 0;
+		printf("mqtt_connection_cb: successfully connected\n");
 	else {
 		printf("mqtt_connection_cb: disconnected, reason: %d\n", status);
 
@@ -369,8 +365,8 @@ void thread2()
 	for(;;) {
 		watchdog_update();
 
-		if (mqtt_failures >= 3) {
-			if (mqtt_failures >= 6) {
+		if (mqtt_failures >= 15) {
+			if (mqtt_failures >= 25) {
 				// reboot
 				printf("failure count too high (%d)\n", mqtt_failures);
 				software_reset();
