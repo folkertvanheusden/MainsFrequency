@@ -50,7 +50,7 @@ static repeating_timer timer;
 
 static int tt = 0;
 
-char sys_id[5] { 0 };
+char sys_id[8] { 0 };
 
 bool timer_isr(struct repeating_timer *t)
 {
@@ -428,6 +428,8 @@ int main(int argc, char *argv[])
 {
 	stdio_init_all();
 
+	sleep_ms(2500);
+
 	uart_init(uart0, 9600);
 
 	gpio_set_function(0, GPIO_FUNC_UART);
@@ -452,10 +454,6 @@ int main(int argc, char *argv[])
 	gpio_init(LED2_PIN);
 	gpio_set_dir(LED2_PIN, GPIO_OUT);
 
-	printf("Start timer\n");
-
-	add_repeating_timer_us(-1000000 / SAMPLE_FREQUENCY, timer_isr, nullptr, &timer);
-
 	uint8_t sys_id_temp[8];
 	flash_get_unique_id(sys_id_temp);
 	// fold in half
@@ -467,6 +465,10 @@ int main(int argc, char *argv[])
 	snprintf(sys_id, sizeof sys_id, "%02x%02x", sys_id_temp[0], sys_id_temp[1]);
 
 	printf("System ID: %s\n", sys_id);
+
+	printf("Start timer\n");
+
+	add_repeating_timer_us(-1000000 / SAMPLE_FREQUENCY, timer_isr, nullptr, &timer);
 
 	printf("Start core 1\n");
 
