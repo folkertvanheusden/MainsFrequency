@@ -118,8 +118,8 @@ static void do_measure(double *const hz, double *variance, double *diff)
 {
 	// take stats
 	sample_reset();
-
 	while (!overflow) sleep_ms(1);
+
 	qsort(buffer, BUF_SIZE, sizeof(uint16_t), compare_uint16);
 	uint16_t q1 = buffer[2 * BUF_SIZE / 8];
 	uint16_t med = buffer[4 * BUF_SIZE / 8];
@@ -290,8 +290,12 @@ void thread2()
 
 	netif_set_hostname(netif_default, "MainsData");
 
+	watchdog_enable(11000, 1);
+
 	int rc = -1;
 	do {
+		watchdog_update();
+
 		rc = cyw43_arch_wifi_connect_timeout_ms(W_SSID, W_PASS, CYW43_AUTH_WPA2_MIXED_PSK, 10000);
 		if (rc)
 			printf("failed to connect %d\n", rc);
@@ -309,13 +313,12 @@ void thread2()
 	IP_ADDR4(&dnsServerIp, 8, 8, 8, 8);
 	dns_setserver(0, &dnsServerIp);
 
-	//	cyw43_arch_lwip_begin();
+	watchdog_enable(2000, 1);
+	watchdog_update();
 
 	printf("start dns lookup\n");
 
 	dns_gethostbyname("vps001.vanheusden.com", &MQTT_HOST, dns_found, &MQTT_HOST);
-
-	watchdog_enable(2000, 1);
 
 	uint32_t start_ts = millis();
 
@@ -336,8 +339,6 @@ void thread2()
 
 	printf("hostname found: %s\n", ipaddr_ntoa(&MQTT_HOST));
 
-	//	cyw43_arch_lwip_end();
-
 	PZEM004Tv30 pzem;
 
 	printf("addr: %02x\n", pzem.readAddress(true));
@@ -345,6 +346,8 @@ void thread2()
 	//	pzem.search();
 
 	for(;;) {
+		uint32_t start_ts = millis();
+
 		watchdog_update();
 
 		if (mqtt_failures >= 15) {
@@ -391,6 +394,19 @@ void thread2()
 		publish_mqtt(&static_client, sys_id, "pzem/energy", pzem.energy());
 
 		publish_mqtt(&static_client, sys_id, "pzem/factor", pzem.pf());
+
+		uint32_t now = millis();
+		uint32_t t_diff = now - start_ts;
+		if (t_diff < 10000) {
+			uint32_t to_sleep = 10000 - t_diff;
+
+			printf("sleep %ums\n", to_sleep);
+			
+			for(int i=0; i<=to_sleep / 100; i++) {
+				watchdog_update();
+				sleep_ms(100);
+			}
+		}
 	}
 
 	cyw43_arch_deinit();
@@ -398,9 +414,9 @@ void thread2()
 
 int main(int argc, char *argv[])
 {
-	stdio_init_all();
+	watchdog_enable(1000, 1);
 
-	sleep_ms(2500);
+	stdio_init_all();
 
 	uart_init(uart0, 9600);
 
@@ -441,6 +457,8 @@ int main(int argc, char *argv[])
 	printf("Start timer\n");
 
 	add_repeating_timer_us(-1000000 / SAMPLE_FREQUENCY, timer_isr, nullptr, &timer);
+
+	watchdog_update();
 
 	printf("Start core 1\n");
 
